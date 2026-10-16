@@ -1,5 +1,8 @@
 import { parseNairaToKobo, type Kobo } from "../lib/money";
 
+// Export RawRow as an alias for ImportRow to satisfy scripts/menu-dryrun.ts
+export type RawRow = ImportRow;
+
 export interface ImportRow {
   sku?: string | null;
   category?: string | null;
@@ -80,10 +83,20 @@ export function dryRunImport(rows: ImportRow[]): DryRunResult {
     const row = i + 1;
     const name = String(r.name ?? r.dish ?? "").trim();
     const category = String(r.category ?? "").trim();
+    
+    // Check if any price column key exists in the row object (even if null/empty)
+    const hasPriceColumn = "price in ₦" in r || "price_ngn" in r;
     const rawPrice = r["price in ₦"] ?? r.price_ngn;
-    const priceStr = rawPrice !== null && rawPrice !== undefined ? String(rawPrice).trim() : "";
+    const priceStr = hasPriceColumn && rawPrice !== null && rawPrice !== undefined ? String(rawPrice).trim() : "";
 
     if (!name || !category) {
+      result.ok = false;
+      result.counts.errors++;
+      result.issues.push({ row, level: "error", message: "Missing columns" });
+      continue;
+    }
+
+    if (!hasPriceColumn) {
       result.ok = false;
       result.counts.errors++;
       result.issues.push({ row, level: "error", message: "Missing columns" });
