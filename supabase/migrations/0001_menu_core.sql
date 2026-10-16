@@ -21,7 +21,8 @@ create table menu_categories (
   version int not null default 1,
   updated_at timestamptz not null default now()
 );
-create unique index menu_categories_name_uq on menu_categories(lower(name));
+-- Partial unique index: allows reusing names of archived categories
+create unique index menu_categories_name_uq on menu_categories(lower(name)) where status <> 'archived';
 
 create table menu_items (
   id uuid primary key default gen_random_uuid(),
@@ -44,8 +45,7 @@ create table menu_items (
   updated_at timestamptz not null default now(),
   constraint published_needs_price check (status <> 'published' or price_kobo is not null)
 );
-
--- FIXED: Added WHERE clause so archiving an item frees the name for reuse
+-- Partial unique index: allows reusing names of archived items
 create unique index menu_items_cat_name_uq on menu_items(category_id, lower(name)) where status <> 'archived';
 
 create table menu_option_groups (
