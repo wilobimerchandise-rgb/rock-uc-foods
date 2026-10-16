@@ -15,6 +15,7 @@ create table profiles (
 create table menu_categories (
   id uuid primary key default gen_random_uuid(),
   name text not null check(length(name) between 1 and 60),
+  status text not null default 'draft' check(status in ('draft', 'published', 'archived')),
   sort_order int not null default 0,
   is_visible boolean not null default true,
   version int not null default 1,
@@ -93,5 +94,5 @@ alter table menu_option_groups enable row level security;
 alter table menu_options enable row level security;
 
 create policy profiles_self_read on profiles for select using (true);
-create policy menu_categories_public_read on menu_categories for select using (is_visible = true);
+create policy menu_categories_public_read on menu_categories for select using (is_visible = true and status = 'published');
 create policy menu_items_public_read on menu_items for select using (status = 'published' and is_available = true);
