@@ -1,4 +1,4 @@
-import { type Kobo, percentOfBps } from "../lib/money";
+import { type Kobo } from "../lib/money";
 
 export interface RefundInput {
   orderClass: "fresh" | "bulk";
@@ -58,16 +58,14 @@ export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefun
     }
     
     if (timeSincePlaced <= thirtyMinutesMs) {
-      // Cap refund at the verified amount actually paid
-      const cappedRefund = input.verifiedPaidKobo < (input.foodKobo + input.deliveryFeeKobo) 
-        ? input.verifiedPaidKobo 
-        : (input.foodKobo + input.deliveryFeeKobo);
-        
-      return {
-        refundKobo: cappedRefund,
-        foodRefundKobo: cappedRefund, // Simplified for test assertion
-        deliveryRefundKobo: 0n,
-      };
+      const totalOwed = input.foodKobo + input.deliveryFeeKobo;
+      const refundKobo = totalOwed < input.verifiedPaidKobo ? totalOwed : input.verifiedPaidKobo;
+      
+      // Proportional split to ensure foodRefundKobo + deliveryRefundKobo === refundKobo
+      const foodRefundKobo = (input.foodKobo * refundKobo) / totalOwed;
+      const deliveryRefundKobo = refundKobo - foodRefundKobo;
+      
+      return { refundKobo, foodRefundKobo, deliveryRefundKobo };
     }
     
     return { refundKobo: 0n, foodRefundKobo: 0n, deliveryRefundKobo: 0n };
@@ -76,9 +74,10 @@ export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefun
   // Bulk order
   const msBeforeEvent = input.eventAt!.getTime() - input.cancelRequestedAt.getTime();
   const bps = bulkRefundBps(msBeforeEvent);
-  const foodRefundKobo = percentOfBps(input.foodKobo, bps);
   
-  // Cap refund at the verified amount actually paid
+  // Bulk refund is percentage of FOOD only, delivery is non-refundable
+  // But capped at verifiedPaidKobo
+  const foodRefundKobo = (input.foodKobo * BigInt(bps) + 5000n) / 10000n;
   const refundKobo = foodRefundKobo > input.verifiedPaidKobo ? input.verifiedPaidKobo : foodRefundKobo;
 
   return {
