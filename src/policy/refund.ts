@@ -4,7 +4,7 @@ export interface RefundInput {
   orderClass: "fresh" | "bulk";
   cancelledBy: "customer" | "us";
   foodKobo: Kobo;
-  deliveryKobo: Kobo;
+  deliveryFeeKobo: Kobo;
   verifiedPaidKobo: Kobo;
   placedAt: Date;
   cancelRequestedAt: Date;
@@ -31,7 +31,7 @@ export function bulkRefundBps(msBeforeEvent: number): number {
 }
 
 export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefundKobo: Kobo; deliveryRefundKobo: Kobo } {
-  if (input.foodKobo < 0n || input.deliveryKobo < 0n || input.verifiedPaidKobo < 0n) {
+  if (input.foodKobo < 0n || input.deliveryFeeKobo < 0n || input.verifiedPaidKobo < 0n) {
     throw new Error("Negative amounts not allowed");
   }
   if (!input.eventAt && input.orderClass === "bulk") {
@@ -45,7 +45,7 @@ export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefun
     return {
       refundKobo: input.verifiedPaidKobo,
       foodRefundKobo: input.foodKobo,
-      deliveryRefundKobo: input.deliveryKobo,
+      deliveryRefundKobo: input.deliveryFeeKobo,
     };
   }
 
@@ -61,17 +61,15 @@ export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefun
       return {
         refundKobo: input.verifiedPaidKobo,
         foodRefundKobo: input.foodKobo,
-        deliveryRefundKobo: input.deliveryKobo,
+        deliveryRefundKobo: input.deliveryFeeKobo,
       };
     }
     
     return { refundKobo: 0n, foodRefundKobo: 0n, deliveryRefundKobo: 0n };
   }
 
-  // Bulk order
   const msBeforeEvent = input.eventAt!.getTime() - input.cancelRequestedAt.getTime();
   const bps = bulkRefundBps(msBeforeEvent);
-  
   const foodRefundKobo = percentOfBps(input.foodKobo, bps);
   const refundKobo = foodRefundKobo > input.verifiedPaidKobo ? input.verifiedPaidKobo : foodRefundKobo;
 
@@ -82,7 +80,8 @@ export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefun
   };
 }
 
-export function canMarkDeliveredAfterFailedContact(calls: number, minutesWaited: number): boolean {
+export function canMarkDeliveredAfterFailedContact(calls: number, placedAt: Date, reportedAt: Date): boolean {
+  const minutesWaited = (reportedAt.getTime() - placedAt.getTime()) / (1000 * 60);
   return calls >= 2 && minutesWaited >= 15;
 }
 
