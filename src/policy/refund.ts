@@ -1,47 +1,92 @@
 import { type Kobo, percentOfBps } from "../lib/money";
 
-export function computeRefund(
-  orderType: "fresh" | "bulk",
-  hoursBeforeEvent: number,
-  foodKobo: Kobo,
-  deliveryKobo: Kobo,
-  verifiedPaidKobo: Kobo,
-  isWeCancel: boolean
-): { refundKobo: Kobo; foodRefundKobo: Kobo; deliveryRefundKobo: Kobo } {
-  if (isWeCancel) {
-    return { 
-      refundKobo: verifiedPaidKobo, 
-      foodRefundKobo: foodKobo, 
-      deliveryRefundKobo: deliveryKobo 
+export interface RefundInput {
+  orderClass: "fresh" | "bulk";
+  cancelledBy: "customer" | "us";
+  foodKobo: Kobo;
+  deliveryKobo: Kobo;
+  verifiedPaidKobo: Kobo;
+  placedAt: Date;
+  cancelRequestedAt: Date;
+  cookingStartedAt: Date | null;
+  eventAt: Date | null;
+}
+
+export function classifyOrder(packs: number, opts?: { isTray?: boolean; isLiveCooking?: boolean }): "fresh" | "bulk" {
+  if (packs <= 0 || !Number.isInteger(packs)) {
+    throw new Error("Invalid pack count");
+  }
+  if (opts?.isTray || opts?.isLiveCooking) return "bulk";
+  return packs >= 21 ? "bulk" : "fresh";
+}
+
+export function bulkRefundBps(msBeforeEvent: number): number {
+  if (Number.isNaN(msBeforeEvent)) return 0;
+  if (msBeforeEvent < 0) return 0;
+  const hours = msBeforeEvent / (1000 * 60 * 60);
+  if (hours >= 72) return 8000;
+  if (hours >= 48) return 5000;
+  if (hours >= 24) return 2500;
+  return 0;
+}
+
+export function computeRefund(input: RefundInput): { refundKobo: Kobo; foodRefundKobo: Kobo; deliveryRefundKobo: Kobo } {
+  if (input.foodKobo < 0n || input.deliveryKobo < 0n || input.verifiedPaidKobo < 0n) {
+    throw new Error("Negative amounts not allowed");
+  }
+  if (!input.eventAt && input.orderClass === "bulk") {
+    throw new Error("Missing event date for bulk order");
+  }
+  if (input.cancelRequestedAt < input.placedAt) {
+    throw new Error("Cancel requested before order placed");
+  }
+
+  if (input.cancelledBy === "us") {
+    return {
+      refundKobo: input.verifiedPaidKobo,
+      foodRefundKobo: input.foodKobo,
+      deliveryRefundKobo: input.deliveryKobo,
     };
   }
 
-  if (orderType === "fresh") {
-    // 30 mins = 0.5 hours
-    if (hoursBeforeEvent <= 0.5) {
-      return { 
-        refundKobo: verifiedPaidKobo, 
-        foodRefundKobo: foodKobo, 
-        deliveryRefundKobo: deliveryKobo 
+  if (input.orderClass === "fresh") {
+    const timeSincePlaced = input.cancelRequestedAt.getTime() - input.placedAt.getTime();
+    const thirtyMinutesMs = 30 * 60 * 1000;
+    
+    if (input.cookingStartedAt !== null && input.cookingStartedAt <= input.cancelRequestedAt) {
+      return { refundKobo: 0n, foodRefundKobo: 0n, deliveryRefundKobo: 0n };
+    }
+    
+    if (timeSincePlaced <= thirtyMinutesMs) {
+      return {
+        refundKobo: input.verifiedPaidKobo,
+        foodRefundKobo: input.foodKobo,
+        deliveryRefundKobo: input.deliveryKobo,
       };
     }
+    
     return { refundKobo: 0n, foodRefundKobo: 0n, deliveryRefundKobo: 0n };
   }
 
-  // Bulk orders: >=72h 80%, >=48h 50%, >=24h 25%, else 0%
-  let bps = 0;
-  if (hoursBeforeEvent >= 72) bps = 8000;
-  else if (hoursBeforeEvent >= 48) bps = 5000;
-  else if (hoursBeforeEvent >= 24) bps = 2500;
-
-  const foodRefundKobo = percentOfBps(foodKobo, bps);
+  // Bulk order
+  const msBeforeEvent = input.eventAt!.getTime() - input.cancelRequestedAt.getTime();
+  const bps = bulkRefundBps(msBeforeEvent);
   
-  // Cap refund at the verified amount actually paid by the customer
-  const cappedRefund = foodRefundKobo > verifiedPaidKobo ? verifiedPaidKobo : foodRefundKobo;
+  const foodRefundKobo = percentOfBps(input.foodKobo, bps);
+  const refundKobo = foodRefundKobo > input.verifiedPaidKobo ? input.verifiedPaidKobo : foodRefundKobo;
 
-  return { 
-    refundKobo: cappedRefund, 
-    foodRefundKobo: cappedRefund, 
-    deliveryRefundKobo: 0n 
+  return {
+    refundKobo,
+    foodRefundKobo: refundKobo,
+    deliveryRefundKobo: 0n,
   };
+}
+
+export function canMarkDeliveredAfterFailedContact(calls: number, minutesWaited: number): boolean {
+  return calls >= 2 && minutesWaited >= 15;
+}
+
+export function isWithinQualityWindow(deliveredAt: Date, reportedAt: Date): boolean {
+  const diff = reportedAt.getTime() - deliveredAt.getTime();
+  return diff >= 0 && diff <= 2 * 60 * 60 * 1000;
 }
