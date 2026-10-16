@@ -1,4 +1,4 @@
--- 0001_profiles_and_menu_core.sql
+-- 0001_menu_core.sql
 -- Profiles, Menu core. Money is bigint kobo only.
 
 create type user_role as enum ('owner', 'staff', 'developer');
@@ -92,6 +92,6 @@ alter table menu_items enable row level security;
 alter table menu_option_groups enable row level security;
 alter table menu_options enable row level security;
 
-create policy profiles_self_read on profiles for select using (true); -- Simplified for in-memory test
+create policy profiles_self_read on profiles for select using (true);
 create policy menu_categories_public_read on menu_categories for select using (is_visible = true);
 create policy menu_items_public_read on menu_items for select using (status = 'published' and is_available = true);
