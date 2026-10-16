@@ -1,53 +1,49 @@
-// All money is integer kobo as bigint. Never use Number/float for money.
-export type Kobo = bigint;
+export const MAX_KOBO = 100000000000n; // 1 Billion Naira cap
 
-export const MAX_KOBO: Kobo = 100_000_000_00n; // ₦100,000,000 sanity ceiling
+export function formatNaira(kobo: bigint): string {
+  const naira = Number(kobo) / 100;
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(naira).replace('NGN', '₦').trim();
+}
 
-export type ParseResult = { ok: true; kobo: Kobo } | { ok: false; error: string };
-
-/** Parse a typed naira string ("₦1,500", "1500.5", "1 500.00") using integer math only. */
-export function parseNairaToKobo(input: unknown): ParseResult {
-  if (typeof input !== "string" && typeof input !== "number") {
-    return { ok: false, error: "Price is required" };
+export function parseNairaToKobo(input: string): bigint {
+  if (!input || typeof input !== 'string') {
+    throw new Error('Invalid input: must be a non-empty string');
   }
-  let s = String(input).trim();
-  if (s === "") return { ok: false, error: "Price is required" };
-  if (/e/i.test(s)) return { ok: false, error: "Scientific notation is not allowed" };
-  s = s.replace(/^₦/, "").replace(/[,\s]/g, "");
-  if (!/^\d+(\.\d{1,2})?$/.test(s)) {
-    return { ok: false, error: "Use digits with at most 2 decimals, e.g. 1500 or 1500.50" };
+
+  // Remove commas and spaces
+  const cleaned = input.replace(/,/g, '').replace(/\s/g, '');
+  
+  // Validate format: optional minus (rejected later), digits, optional decimal with 1-2 digits
+  const match = cleaned.match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) {
+    throw new Error(`Invalid currency format: "${input}". Use digits with up to 2 decimal places.`);
   }
-  const [whole = "0", frac = ""] = s.split(".");
-  const kobo = BigInt(whole) * 100n + BigInt(frac.padEnd(2, "0"));
-  if (kobo <= 0n) return { ok: false, error: "Price must be greater than ₦0" };
-  if (kobo > MAX_KOBO) return { ok: false, error: "Price is above the allowed maximum" };
-  return { ok: true, kobo };
+
+  const isNegative = match[1] === '-';
+  const wholePart = BigInt(match[2]);
+  const decimalPart = match[3] ? BigInt(match[3].padEnd(2, '0')) : 0n;
+
+  if (isNegative) {
+    throw new Error('Negative amounts are not allowed');
+  }
+
+  const totalKobo = (wholePart * 100n) + decimalPart;
+
+  if (totalKobo > MAX_KOBO) {
+    throw new Error(`Amount exceeds maximum allowed value`);
+  }
+
+  return totalKobo;
 }
 
-/** Display with ₦ and thousands separators. Never "NGN". */
-export function formatKobo(kobo: Kobo): string {
-  const neg = kobo < 0n;
-  const abs = neg ? -kobo : kobo;
-  const whole = (abs / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const frac = (abs % 100n).toString().padStart(2, "0");
-  return `${neg ? "-" : ""}₦${whole}.${frac}`;
-}
-
-/** kobo * bps / 10000, rounded half up, once. bps: 7000 = 70%. */
-export function percentOfBps(kobo: Kobo, bps: number): Kobo {
-  if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) throw new RangeError("bps must be an integer 0..10000");
-  if (kobo < 0n) throw new RangeError("kobo must be >= 0");
-  return (kobo * BigInt(bps) + 5_000n) / 10_000n;
-}
-
-/** Line total = unit price * quantity (integer qty >= 1). */
-export function lineTotal(unit: Kobo, qty: number): Kobo {
-  if (!Number.isInteger(qty) || qty < 1 || qty > 10_000) throw new RangeError("quantity must be an integer 1..10000");
-  return unit * BigInt(qty);
-}
-
-/** Deposit rounded half up; balance = total - deposit so the two always sum exactly. */
-export function splitDeposit(total: Kobo, depositBps = 7000): { deposit: Kobo; balance: Kobo } {
-  const deposit = percentOfBps(total, depositBps);
-  return { deposit, balance: total - deposit };
+export function applyPercentRoundHalfUp(kobo: bigint, basisPoints: number): bigint {
+  if (basisPoints < 0) throw new Error('Basis points cannot be negative');
+  // Formula: (kobo * bps + 5000) / 10000
+  // 5000 is half of 10000, achieving "round half up"
+  return (kobo * BigInt(basisPoints) + 5000n) / 10000n;
 }
