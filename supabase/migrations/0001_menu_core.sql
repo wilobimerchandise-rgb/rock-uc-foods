@@ -44,7 +44,9 @@ create table menu_items (
   updated_at timestamptz not null default now(),
   constraint published_needs_price check (status <> 'published' or price_kobo is not null)
 );
-create unique index menu_items_cat_name_uq on menu_items(category_id, lower(name));
+
+-- FIXED: Added WHERE clause so archiving an item frees the name for reuse
+create unique index menu_items_cat_name_uq on menu_items(category_id, lower(name)) where status <> 'archived';
 
 create table menu_option_groups (
   id uuid primary key default gen_random_uuid(),
