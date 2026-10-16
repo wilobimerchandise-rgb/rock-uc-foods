@@ -1,4 +1,5 @@
--- 0002_audit_and_settings.sql
+-- 0002_policy_acceptance.sql
+-- Audit logs and business settings.
 
 create table audit_logs (
   id uuid primary key default gen_random_uuid(),
@@ -24,7 +25,7 @@ create trigger audit_logs_immutable before update or delete on audit_logs
 for each row execute function forbid_audit_change();
 
 alter table audit_logs enable row level security;
-create policy audit_logs_owner_read on audit_logs for select using (true); -- Simplified for in-memory test
+create policy audit_logs_owner_read on audit_logs for select using (true);
 
 create table business_settings (
   key text primary key,
