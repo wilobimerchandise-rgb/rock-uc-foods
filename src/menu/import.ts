@@ -1,19 +1,21 @@
 import { parseNairaToKobo, type Kobo } from "../lib/money";
 
 export interface ImportRow {
-  sku?: string;
-  category: string;
-  name?: string;
-  dish?: string; // Alias for name to support template variations
-  description?: string;
-  price_ngn?: string;
-  portion_label?: string;
-  allergens?: string;
-  status?: string;
-  available?: string;
-  featured?: string;
-  sort_order?: string;
-  extras?: string;
+  sku?: string | null;
+  category?: string | null;
+  name?: string | null;
+  dish?: string | null;
+  description?: string | null;
+  "price in ₦"?: string | number | null;
+  price_ngn?: string | number | null;
+  portion?: string | null;
+  portion_label?: string | null;
+  allergens?: string | null;
+  status?: string | null;
+  available?: string | boolean | null;
+  featured?: string | boolean | null;
+  sort_order?: string | number | null;
+  extras?: string | null;
 }
 
 export interface ParsedItem {
@@ -33,24 +35,39 @@ export interface ParsedItem {
 
 export interface DryRunResult {
   ok: boolean;
-  toCreate: ParsedItem[];
-  toUpdate: { key: string; oldPriceKobo: Kobo; newPriceKobo: Kobo }[];
-  rejected: { row: number; level: "error" | "warning"; message: string }[];
+  counts: {
+    rows: number;
+    valid: number;
+    publishable: number;
+    draftOnly: number;
+    warnings: number;
+    errors: number;
+  };
+  issues: { row: number; level: "error" | "warning"; message: string }[];
   items: ParsedItem[];
 }
 
-export function dryRunImport(rows: ImportRow[], maxRows = 500): DryRunResult {
-  const result: DryRunResult = { ok: true, toCreate: [], toUpdate: [], rejected: [], items: [] };
-  
+export const MAX_IMPORT_ROWS = 500;
+
+export function dryRunImport(rows: ImportRow[]): DryRunResult {
+  const result: DryRunResult = {
+    ok: true,
+    counts: { rows: rows.length, valid: 0, publishable: 0, draftOnly: 0, warnings: 0, errors: 0 },
+    issues: [],
+    items: [],
+  };
+
   if (rows.length === 0) {
     result.ok = false;
-    result.rejected.push({ row: 0, level: "error", message: "File is empty" });
+    result.counts.errors = 1;
+    result.issues.push({ row: 0, level: "error", message: "Missing columns or empty file" });
     return result;
   }
 
-  if (rows.length > maxRows) {
+  if (rows.length > MAX_IMPORT_ROWS) {
     result.ok = false;
-    result.rejected.push({ row: 0, level: "error", message: `Exceeds maximum of ${maxRows} rows` });
+    result.counts.errors = 1;
+    result.issues.push({ row: 0, level: "error", message: `Exceeds maximum of ${MAX_IMPORT_ROWS} rows` });
     return result;
   }
 
@@ -58,14 +75,18 @@ export function dryRunImport(rows: ImportRow[], maxRows = 500): DryRunResult {
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
+    if (!r) continue;
+    
     const row = i + 1;
-    const name = ((r.name || r.dish) || "").trim();
-    const category = (r.category || "").trim();
-    const priceStr = (r.price_ngn || "").trim();
+    const name = String(r.name ?? r.dish ?? "").trim();
+    const category = String(r.category ?? "").trim();
+    const rawPrice = r["price in ₦"] ?? r.price_ngn;
+    const priceStr = rawPrice !== null && rawPrice !== undefined ? String(rawPrice).trim() : "";
 
     if (!name || !category) {
       result.ok = false;
-      result.rejected.push({ row, level: "error", message: "Missing name or category" });
+      result.counts.errors++;
+      result.issues.push({ row, level: "error", message: "Missing columns" });
       continue;
     }
 
@@ -75,43 +96,55 @@ export function dryRunImport(rows: ImportRow[], maxRows = 500): DryRunResult {
 
     if (seenNames.has(nameKey)) {
       result.ok = false;
-      result.rejected.push({ row, level: "error", message: `Duplicate dish "${name}" in category "${category}"` });
+      result.counts.errors++;
+      result.issues.push({ row, level: "error", message: `Duplicate dish "${name}" in category "${category}"` });
       continue;
     }
     seenNames.set(nameKey, row);
 
     let priceKobo: Kobo = 0n;
+    let isPublishable = false;
+
     if (priceStr) {
       const p = parseNairaToKobo(priceStr);
       if (p.ok) {
         if (p.kobo === 0n) {
           result.ok = false;
-          result.rejected.push({ row, level: "error", message: "Price cannot be 0" });
+          result.counts.errors++;
+          result.issues.push({ row, level: "error", message: "Price cannot be 0" });
           continue;
         }
         priceKobo = p.kobo;
+        isPublishable = true;
       } else {
         result.ok = false;
-        result.rejected.push({ row, level: "error", message: `Price: ${p.error}` });
+        result.counts.errors++;
+        result.issues.push({ row, level: "error", message: `Price: ${p.error}` });
         continue;
       }
+    } else {
+      result.counts.warnings++;
+      result.issues.push({ row, level: "warning", message: "No price provided, will import as draft" });
     }
 
-    const status = (r.status || "draft").toLowerCase() as "draft" | "published" | "archived";
-    const is_available = (r.available || "true").toLowerCase() === "true";
-    const is_featured = (r.featured || "false").toLowerCase() === "true";
-    const sort_order = parseInt(r.sort_order || "0", 10) || 0;
+    const status = String(r.status ?? "draft").toLowerCase() as "draft" | "published" | "archived";
+    const is_available = String(r.available ?? "true").toLowerCase() === "true";
+    const is_featured = String(r.featured ?? "false").toLowerCase() === "true";
+    const sort_order = parseInt(String(r.sort_order ?? "0"), 10) || 0;
 
     const extras: { name: string; priceKobo: Kobo }[] = [];
-    if (r.extras && r.extras.trim()) {
-      const extraParts = r.extras.split(";");
+    if (r.extras !== null && r.extras !== undefined && String(r.extras).trim()) {
+      const extraParts = String(r.extras).split(";");
+      let extrasValid = true;
       for (const part of extraParts) {
         const trimmedPart = part.trim();
         if (!trimmedPart) continue;
         const colonIdx = trimmedPart.indexOf(":");
         if (colonIdx === -1) {
           result.ok = false;
-          result.rejected.push({ row, level: "error", message: `Malformed extra: "${trimmedPart}". Expected "Name:Price"` });
+          result.counts.errors++;
+          result.issues.push({ row, level: "error", message: `Malformed extras: "${trimmedPart}". Expected "Name:Price"` });
+          extrasValid = false;
           break;
         }
         const eName = trimmedPart.substring(0, colonIdx).trim();
@@ -122,40 +155,47 @@ export function dryRunImport(rows: ImportRow[], maxRows = 500): DryRunResult {
           extras.push({ name: eName, priceKobo: ep.kobo });
         } else {
           result.ok = false;
-          result.rejected.push({ row, level: "error", message: `Invalid extra price for "${eName}": ${ep.error}` });
+          result.counts.errors++;
+          result.issues.push({ row, level: "error", message: `Invalid extra price for "${eName}": ${ep.error}` });
+          extrasValid = false;
           break;
         }
       }
+      if (!extrasValid) continue;
     }
 
     if (/^[=+\-@]/.test(name) || /^[=+\-@]/.test(category)) {
       result.ok = false;
-      result.rejected.push({ row, level: "error", message: "Formula injection detected in name or category" });
+      result.counts.errors++;
+      result.issues.push({ row, level: "error", message: "Formula injection detected in name or category" });
       continue;
     }
 
     const item: ParsedItem = {
-      key: (r.sku || "").trim() || nameKey,
+      key: String(r.sku ?? "").trim() || nameKey,
       category,
       name,
-      description: (r.description || "").trim(),
+      description: String(r.description ?? "").trim(),
       priceKobo,
-      portion_label: (r.portion_label || "").trim(),
-      allergens: (r.allergens || "").trim() ? (r.allergens || "").split(",").map(a => a.trim()) : [],
-      status: status === "published" || status === "archived" ? status : "draft",
+      portion_label: String(r.portion_label ?? r.portion ?? "").trim(),
+      allergens: (r.allergens !== null && r.allergens !== undefined && String(r.allergens).trim()) 
+        ? String(r.allergens).split(",").map(a => a.trim()) 
+        : [],
+      status: isPublishable ? (status === "published" ? "published" : "draft") : "draft",
       is_available,
       is_featured,
       sort_order,
       extras,
     };
 
-    if (!priceStr) {
-      result.rejected.push({ row, level: "warning", message: "No price provided, will import as draft" });
-      item.status = "draft";
+    result.counts.valid++;
+    if (isPublishable) {
+      result.counts.publishable++;
+    } else {
+      result.counts.draftOnly++;
     }
 
     result.items.push(item);
-    result.toCreate.push(item);
   }
 
   return result;
