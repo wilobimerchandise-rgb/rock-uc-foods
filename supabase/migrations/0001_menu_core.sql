@@ -29,8 +29,8 @@ create table menu_items (
   category_id uuid not null references menu_categories(id) on delete restrict,
   name text not null check(length(name) between 1 and 80),
   description text check(length(description) <= 500),
-  price_kobo bigint not null check(price_kobo >= 0 and price_kobo <= 100000000000),
-  portion_label text,
+  price_kobo bigint check (price_kobo is null or (price_kobo > 0 and price_kobo <= 10000000000)),
+  portion text,
   allergens text[] not null default '{}',
   image_path text,
   image_alt text,
@@ -41,7 +41,8 @@ create table menu_items (
   sort_order int not null default 0,
   version int not null default 1,
   updated_by uuid references profiles(id),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint published_needs_price check (status <> 'published' or price_kobo is not null)
 );
 create unique index menu_items_cat_name_uq on menu_items(category_id, lower(name));
 
