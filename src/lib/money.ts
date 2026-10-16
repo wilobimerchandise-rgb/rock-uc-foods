@@ -1,6 +1,8 @@
+export type Kobo = bigint;
+
 export const MAX_KOBO = 100000000000n; // 1 Billion Naira cap
 
-export function formatNaira(kobo: bigint): string {
+export function formatNaira(kobo: Kobo): string {
   const naira = Number(kobo) / 100;
   return new Intl.NumberFormat('en-NG', {
     style: 'currency',
@@ -10,40 +12,41 @@ export function formatNaira(kobo: bigint): string {
   }).format(naira).replace('NGN', '₦').trim();
 }
 
-export function parseNairaToKobo(input: string): bigint {
+export function parseNairaToKobo(input: string): { ok: true; kobo: Kobo } | { ok: false; error: string } {
   if (!input || typeof input !== 'string') {
-    throw new Error('Invalid input: must be a non-empty string');
+    return { ok: false, error: 'Invalid input: must be a non-empty string' };
   }
 
-  // Remove commas and spaces
   const cleaned = input.replace(/,/g, '').replace(/\s/g, '');
-  
-  // Validate format: optional minus (rejected later), digits, optional decimal with 1-2 digits
   const match = cleaned.match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/);
   if (!match) {
-    throw new Error(`Invalid currency format: "${input}". Use digits with up to 2 decimal places.`);
+    return { ok: false, error: `Invalid currency format: "${input}". Use digits with up to 2 decimal places.` };
   }
 
   const isNegative = match[1] === '-';
-  const wholePart = BigInt(match[2]);
-  const decimalPart = match[3] ? BigInt(match[3].padEnd(2, '0')) : 0n;
-
+  const wholePartStr = match[2] ?? '0';
+  const decimalPartStr = match[3] ? match[3].padEnd(2, '0') : '00';
+  
   if (isNegative) {
-    throw new Error('Negative amounts are not allowed');
+    return { ok: false, error: 'Negative amounts are not allowed' };
   }
 
+  const wholePart = BigInt(wholePartStr);
+  const decimalPart = BigInt(decimalPartStr);
   const totalKobo = (wholePart * 100n) + decimalPart;
 
   if (totalKobo > MAX_KOBO) {
-    throw new Error(`Amount exceeds maximum allowed value`);
+    return { ok: false, error: 'Amount exceeds maximum allowed value' };
   }
 
-  return totalKobo;
+  return { ok: true, kobo: totalKobo };
 }
 
-export function applyPercentRoundHalfUp(kobo: bigint, basisPoints: number): bigint {
+export function applyPercentRoundHalfUp(kobo: Kobo, basisPoints: number): Kobo {
   if (basisPoints < 0) throw new Error('Basis points cannot be negative');
-  // Formula: (kobo * bps + 5000) / 10000
-  // 5000 is half of 10000, achieving "round half up"
   return (kobo * BigInt(basisPoints) + 5000n) / 10000n;
+}
+
+export function percentOfBps(kobo: Kobo, bps: number): Kobo {
+  return applyPercentRoundHalfUp(kobo, bps);
 }
