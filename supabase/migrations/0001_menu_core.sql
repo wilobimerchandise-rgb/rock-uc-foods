@@ -21,14 +21,15 @@ create table menu_categories (
   version int not null default 1,
   updated_at timestamptz not null default now()
 );
--- Partial unique index: allows reusing names of archived categories
-create unique index menu_categories_name_uq on menu_categories(lower(name)) where status <> 'archived';
+create unique index menu_categories_name_uq on menu_categories(lower(name));
 
 create table menu_items (
   id uuid primary key default gen_random_uuid(),
   sku text unique,
   category_id uuid not null references menu_categories(id) on delete restrict,
   name text not null check(length(name) between 1 and 80),
+  -- Generated column for conditional uniqueness: NULL when archived (ignored by unique index)
+  active_name text generated always as (case when status <> 'archived' then lower(name) else null end) stored,
   description text check(length(description) <= 500),
   price_kobo bigint check (price_kobo is null or (price_kobo > 0 and price_kobo <= 10000000000)),
   portion text,
@@ -45,8 +46,9 @@ create table menu_items (
   updated_at timestamptz not null default now(),
   constraint published_needs_price check (status <> 'published' or price_kobo is not null)
 );
--- Partial unique index: allows reusing names of archived items
-create unique index menu_items_cat_name_uq on menu_items(category_id, lower(name)) where status <> 'archived';
+
+-- Unique index on the generated column. NULLs (archived items) are ignored, freeing the name.
+create unique index menu_items_cat_name_uq on menu_items(category_id, active_name);
 
 create table menu_option_groups (
   id uuid primary key default gen_random_uuid(),
